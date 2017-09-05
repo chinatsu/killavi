@@ -3,8 +3,9 @@
 import struct
 import tempfile
 import shutil
+from functools import partial
 
-BUFFER_SIZE = 2 ** 24
+BUFFER_SIZE = 1024
 AVIIF_LIST = 0x00000001
 AVIIF_KEYFRAME = 0x00000010
 AVIIF_NO_TIME = 0x00000100
@@ -68,16 +69,15 @@ class Frames(object):
             stream.seek(s - 4, 1)
         self.pos_of_idx1 = stream.tell() - 4
         s = struct.unpack('<I', stream.read(4))[0] + stream.tell()
-        meta = []
+        self.meta = []
         while stream.tell() < s:
             chunk_id = stream.read(4)
-            meta.append({
+            self.meta.append({
                 "id": chunk_id,
                 "flag": struct.unpack("<I", stream.read(4))[0],
                 "offset": struct.unpack("<I", stream.read(4))[0],
                 "size": struct.unpack("<I", stream.read(4))[0]
             })
-        self.meta = meta
         self.fix_offsets(stream)
         stream.seek(0)
         self.stream = stream
@@ -103,26 +103,37 @@ class Frames(object):
 
     def overwrite(self, data):
         '''Rebuild self.stream with frames and metadata from data'''
-        self.stream.seek(0)
         self.stream.seek(self.pos_of_movi - 4)
         self.stream.write(struct.pack("<I", data.tell() + 4))
         self.stream.write(b'movi')
         data.seek(0)
-        for d in data.read(BUFFER_SIZE):
+        while True:
+            d = data.read(BUFFER_SIZE)
             self.stream.write(bytes(d))
+            if len(d) < BUFFER_SIZE:
+                break
         self.stream.write(b'idx1')
         self.stream.write(struct.pack("<I", len(self.meta) * 16))
         for m in self.meta:
-            self.stream.write(m['id'])
-            self.stream.write(struct.pack("<III", m['flag'], m['offset'], m['size']))
+            self.stream.write(m['id'] + struct.pack("<III", m['flag'], m['offset'], m['size']))
         eof = self.stream.tell()
         self.stream.truncate(eof)
+        self.stream.seek(4)
+        self.stream.write(struct.pack("<I", eof - 8))
+        self.stream.seek(48)
+        count = 0
+        for m in self.meta:
+            if m['id'][-2:] in [b'db', b'dc']:
+                count += 1
+        self.stream.write(struct.pack("<I", count))
+        self.stream.seek(0)
 
     def keyframes_to_deltaframes(self, range=None):
         '''Turn keyframes into deltaframes (incomplete)'''
-        for idx, m in enumerate(self.meta):
-            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'])
-            frame.frameflag = 0
+        for i, _ in enumerate(self.meta):
+            frame = self.at(i)
+            if frame.is_keyframe:
+                frame.flag = 0
 
     def at(self, n):
         '''Return a Frame at n position'''
@@ -168,6 +179,6 @@ class Frame(object):
         return self.frameid[-2:] == b'wb'
 
 a = Base('drop.avi')
-print(a.is_formatted())
-a.frames.overwrite(a.frames.stream)
+io = a.frames.as_temp()
+a.frames.overwrite(io)
 a.output("drop3.avi")
