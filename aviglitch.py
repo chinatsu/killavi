@@ -78,12 +78,34 @@ class Frames(object):
                 "offset": struct.unpack("<I", stream.read(4))[0],
                 "size": struct.unpack("<I", stream.read(4))[0]
             })
-        self.fix_offsets(stream)
+        self.__fix_offsets(stream)
         stream.seek(0)
         self.stream = stream
 
     def __len__(self):
         return len(self.meta)
+
+    def __iter__(self):
+        for i in range(0, len(self)):
+            yield self[i]
+
+    def __getitem__(self, n):
+        '''Return a Frame at n position'''
+        try:
+            m = self.meta[n]
+            self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
+            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'])
+            self.stream.seek(0)
+            return frame
+        except:
+            return None
+
+    def insert(self, frame, n):
+        m = self.meta[n]
+        offset = m['offset']
+        m['id'] = frame.frameid
+        m['flag'] = frame.frameflag
+        m['size'] = len(frame.framedata)
 
     def as_temp(self, io=None, block=None):
         if io is None:
@@ -133,23 +155,16 @@ class Frames(object):
 
     def keyframes_to_deltaframes(self, range=None):
         '''Turn keyframes into deltaframes (incomplete)'''
-        for i, _ in enumerate(self.meta):
-            frame = self.at(i)
-            if frame.is_keyframe:
-                frame.flag = 0
+        for idx, frame in enumerate(self):
+            if frame.is_iframe():
+                frame.frameflag = 0
+                self.insert(frame, idx)
 
-    def at(self, n):
-        '''Return a Frame at n position'''
-        try:
-            m = self.meta[n]
-            self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
-            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'])
-            self.stream.seek(0)
-            return frame
-        except:
-            return None
+    def remove_keyframes(self):
+        '''Remove all keyframes!!'''
+        self.meta = [x for x in self.meta if not x['flag'] & AVIIF_KEYFRAME != 0]
 
-    def fix_offsets(self, stream):
+    def __fix_offsets(self, stream):
         if len(self.meta) == 0:
             return
         position = stream.tell()
@@ -170,10 +185,14 @@ class Frame(object):
     def is_iframe(self):
         if self.is_videoframe():
             return self.frameflag & AVIIF_KEYFRAME != 0
+        else:
+            return False
 
     def is_pframe(self):
         if self.is_videoframe():
             return self.frameflag & AVIIF_KEYFRAME == 0
+        else:
+            return False
 
     def is_videoframe(self):
         return self.frameid[-2:] in [b'db', b'dc']
@@ -181,5 +200,8 @@ class Frame(object):
     def is_audioframe(self):
         return self.frameid[-2:] == b'wb'
 
-a = Base('drop.avi')
-print(len(a.frames))
+a = Base('rickroll.avi')
+a.frames.remove_keyframes()
+io = a.frames.as_temp()
+a.frames.overwrite(io)
+a.output('rickroll2.avi')
