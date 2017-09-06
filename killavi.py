@@ -150,17 +150,18 @@ class Frames(object):
         newmeta = []
         for frame in self:
             if frame.is_pframe():
-                    lastpframe = frame.as_meta()
+                    lastpframe = frame.as_meta() # save the first pframe to use at the start of the video
                     break
         for frame in self:
             if frame.is_audioframe():
-                newmeta.append(frame.as_meta())
+                newmeta.append(frame.as_meta()) # insert audio frames to keep them there
             elif frame.is_videoframe():
                 if frame.is_pframe():
-                    newmeta.append(frame.as_meta())
+                    newmeta.append(frame.as_meta()) # put all the pframes in where they're meant to be
                     lastpframe = frame.as_meta()
                 else:
-                    newmeta.append(lastpframe)
+                    newmeta.append(lastpframe) # if the frame is not a pframe, just insert the last pframe instead >:)
+                                               # this is to keep the video synced with the audio, so to speak
         self.meta = newmeta
 
     def __fix_offsets(self, stream):
