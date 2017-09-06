@@ -38,16 +38,16 @@ class Base(object):
             is_io = False
         try:
             self.temp.seek(0, 0)
-            if self.temp.read(4) != b'RIFF':
+            if self.temp.read(4) != b'RIFF': # if the first 4 bytes doesn't equal RIFF, we know this shit ain't avi
                 return False
-            len = struct.unpack('<I', self.temp.read(4))[0]
-            if self.temp.read(4) != b'AVI ':
+            l = struct.unpack('<I', self.temp.read(4))[0] # idk why i put this into a variable lol
+            if self.temp.read(4) != b'AVI ': # if there's no avi here, it ain't no avi!!!
                 return False
             while self.temp.read(4) in [b'LIST', b'JUNK']:
                 s = struct.unpack('<I', self.temp.read(4))[0]
                 self.temp.seek(s, 1)
             self.temp.seek(-4, 1)
-            if self.temp.read(4) != b'idx1':
+            if self.temp.read(4) != b'idx1': # if there's no idx1 here it AINT NO AVI!!!!!!
                 return False
             s = struct.unpack('<I', self.temp.read(4))[0]
             self.temp.seek(s, 1)
@@ -65,12 +65,12 @@ class Frames(object):
         while stream.read(4) in [b'LIST', b'JUNK']:
             s = struct.unpack('<I', stream.read(4))[0]
             if stream.read(4) == b'movi':
-                self.pos_of_movi = stream.tell() - 4
+                self.pos_of_movi = stream.tell() - 4 # get ourselves the 'movi' marker
             stream.seek(s - 4, 1)
-        self.pos_of_idx1 = stream.tell() - 4
+        self.pos_of_idx1 = stream.tell() - 4 # get the 'idx1' marker
         s = struct.unpack('<I', stream.read(4))[0] + stream.tell()
         self.meta = []
-        while stream.tell() < s:
+        while stream.tell() < s: # build the list of meta which contains data for each frame
             chunk_id = stream.read(4)
             self.meta.append({
                 "id": chunk_id,
@@ -78,11 +78,12 @@ class Frames(object):
                 "offset": struct.unpack("<I", stream.read(4))[0],
                 "size": struct.unpack("<I", stream.read(4))[0]
             })
-        self.__fix_offsets(stream)
-        stream.seek(0)
+        self.__fix_offsets(stream) # better try to realign this shit
+        stream.seek(0) # let's go back to the beginning for future reads
         self.stream = stream
 
     def __len__(self):
+        '''Returns the amount of frames'''
         return len(self.meta)
 
     def __iter__(self):
@@ -91,16 +92,14 @@ class Frames(object):
 
     def __getitem__(self, n):
         '''Return a Frame at n position'''
-        try:
-            m = self.meta[n]
-            self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
-            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'], m['offset'])
-            self.stream.seek(0)
-            return frame
-        except:
-            return None
+        m = self.meta[n]
+        self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
+        frame = Frame(self.stream.read(m['size']), m['id'], m['flag'], m['offset'])
+        self.stream.seek(0)
+        return frame
 
     def as_temp(self, io=None, block=None):
+        '''Rebuild the data stream into a TemporaryFile which is returned'''
         if io is None:
             io = tempfile.TemporaryFile()
         for m in self.meta:
@@ -120,7 +119,7 @@ class Frames(object):
         return io
 
     def overwrite(self, data):
-        '''Rebuild self.stream with frames and metadata from data'''
+        '''Rebuild self.stream with frames from data, and metadata from meta'''
         self.stream.seek(self.pos_of_movi - 4)
         self.stream.write(struct.pack("<I", data.tell() + 4))
         self.stream.write(b'movi')
@@ -184,7 +183,7 @@ class Frame(object):
         self.frameoffset = offset
 
     def as_meta(self):
-        '''Reverts the process to make an entry in Frames.meta'''
+        '''Reverts the process from a Frame instance to an entry in Frames.meta'''
         return {'offset': self.frameoffset,
                 'flag': self.frameflag,
                 'id': self.frameid,
@@ -208,8 +207,9 @@ class Frame(object):
     def is_audioframe(self):
         return self.frameid[-2:] == b'wb'
 
-a = Base('sample.avi')
-a.frames.remove_keyframes()
-io = a.frames.as_temp()
-a.frames.overwrite(io)
-a.output('sample2.avi')
+if __name__ == '__main__':
+    a = Base('sample.avi') # load a file named sample.avi
+    a.frames.remove_keyframes() # remove its keyframes
+    io = a.frames.as_temp() # build the bytestream
+    a.frames.overwrite(io) # overwrite the Frames instance with the new shit
+    a.output('sample2.avi') # output the things
