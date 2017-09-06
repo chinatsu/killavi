@@ -5,7 +5,7 @@ import tempfile
 import shutil
 from functools import partial
 
-BUFFER_SIZE = 1024
+BUFFER_SIZE = 2 ** 24
 AVIIF_LIST = 0x00000001
 AVIIF_KEYFRAME = 0x00000010
 AVIIF_NO_TIME = 0x00000100
@@ -81,6 +81,9 @@ class Frames(object):
         self.fix_offsets(stream)
         stream.seek(0)
         self.stream = stream
+
+    def __len__(self):
+        return len(self.meta)
 
     def as_temp(self, io=None, block=None):
         if io is None:
@@ -164,11 +167,11 @@ class Frame(object):
         self.frameid = frameid
         self.frameflag = frameflag
 
-    def is_keyframe(self):
+    def is_iframe(self):
         if self.is_videoframe():
             return self.frameflag & AVIIF_KEYFRAME != 0
 
-    def is_deltaframe(self):
+    def is_pframe(self):
         if self.is_videoframe():
             return self.frameflag & AVIIF_KEYFRAME == 0
 
@@ -179,6 +182,4 @@ class Frame(object):
         return self.frameid[-2:] == b'wb'
 
 a = Base('drop.avi')
-io = a.frames.as_temp()
-a.frames.overwrite(io)
-a.output("drop3.avi")
+print(len(a.frames))
