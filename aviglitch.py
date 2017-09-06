@@ -94,25 +94,18 @@ class Frames(object):
         try:
             m = self.meta[n]
             self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
-            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'])
+            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'], m['offset'])
             self.stream.seek(0)
             return frame
         except:
             return None
-
-    def insert(self, frame, n):
-        m = self.meta[n]
-        offset = m['offset']
-        m['id'] = frame.frameid
-        m['flag'] = frame.frameflag
-        m['size'] = len(frame.framedata)
 
     def as_temp(self, io=None, block=None):
         if io is None:
             io = tempfile.TemporaryFile()
         for m in self.meta:
             self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
-            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'])
+            frame = Frame(self.stream.read(m['size']), m['id'], m['flag'], m['offset'])
             if frame.framedata:
                 m['offset'] = io.tell() + 4
                 m['size'] = len(frame.framedata)
@@ -153,16 +146,23 @@ class Frames(object):
         self.stream.write(struct.pack("<I", count))
         self.stream.seek(0)
 
-    def keyframes_to_deltaframes(self, range=None):
-        '''Turn keyframes into deltaframes (incomplete)'''
-        for idx, frame in enumerate(self):
-            if frame.is_iframe():
-                frame.frameflag = 0
-                self.insert(frame, idx)
-
     def remove_keyframes(self):
         '''Remove all keyframes!!'''
-        self.meta = [x for x in self.meta if not x['flag'] & AVIIF_KEYFRAME != 0]
+        newmeta = []
+        for frame in self:
+            if frame.is_pframe():
+                    lastpframe = frame.as_meta()
+                    break
+        for frame in self:
+            if frame.is_audioframe():
+                newmeta.append(frame.as_meta())
+            elif frame.is_videoframe():
+                if frame.is_pframe():
+                    newmeta.append(frame.as_meta())
+                    lastpframe = frame.as_meta()
+                else:
+                    newmeta.append(lastpframe)
+        self.meta = newmeta
 
     def __fix_offsets(self, stream):
         if len(self.meta) == 0:
@@ -177,10 +177,18 @@ class Frames(object):
 
 
 class Frame(object):
-    def __init__(self, framedata, frameid, frameflag):
+    def __init__(self, framedata, frameid, frameflag, offset):
         self.framedata = framedata
         self.frameid = frameid
         self.frameflag = frameflag
+        self.frameoffset = offset
+
+    def as_meta(self):
+        '''Reverts the process to make an entry in Frames.meta'''
+        return {'offset': self.frameoffset,
+                'flag': self.frameflag,
+                'id': self.frameid,
+                'size': len(self.framedata)}
 
     def is_iframe(self):
         if self.is_videoframe():
@@ -200,8 +208,8 @@ class Frame(object):
     def is_audioframe(self):
         return self.frameid[-2:] == b'wb'
 
-a = Base('rickroll.avi')
+a = Base('sample.avi')
 a.frames.remove_keyframes()
 io = a.frames.as_temp()
 a.frames.overwrite(io)
-a.output('rickroll2.avi')
+a.output('sample2.avi')
