@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import struct
 import tempfile
 import shutil
@@ -149,18 +147,17 @@ class Frames(object):
         '''Remove all keyframes!!'''
         newmeta = []
         for frame in self:
-            if frame.is_pframe():
+            if frame.is_iframe():
                     lastpframe = frame.as_meta() # save the first pframe to use at the start of the video
                     break
         for frame in self:
             if frame.is_audioframe():
                 newmeta.append(frame.as_meta()) # insert audio frames to keep them there
-            elif frame.is_videoframe():
-                if frame.is_pframe():
-                    newmeta.append(frame.as_meta()) # put all the pframes in where they're meant to be
-                    lastpframe = frame.as_meta()
-                else:
-                    newmeta.append(lastpframe) # if the frame is not a pframe, just insert the last pframe instead >:)
+            if frame.is_pframe():
+                newmeta.append(frame.as_meta()) # put all the pframes in where they're meant to be
+                lastpframe = frame.as_meta()
+            elif frame.is_iframe():
+                newmeta.append(lastpframe) # if the frame is not a pframe, just insert the last pframe instead >:)
                                                # this is to keep the video synced with the audio, so to speak
         self.meta = newmeta
 
@@ -207,10 +204,3 @@ class Frame(object):
 
     def is_audioframe(self):
         return self.frameid[-2:] == b'wb'
-
-if __name__ == '__main__':
-    a = Base('sample.avi') # load a file named sample.avi
-    a.frames.remove_keyframes() # remove its keyframes
-    io = a.frames.as_temp() # build the bytestream
-    a.frames.overwrite(io) # overwrite the Frames instance with the new shit
-    a.output('sample2.avi') # output the things
