@@ -1,7 +1,11 @@
 import struct
 import tempfile
 import shutil
+import sys
 from functools import partial
+import avi
+from avi import AVI, bytes_to_file
+
 
 BUFFER_SIZE = 2 ** 24
 AVIIF_LIST = 0x00000001
@@ -18,13 +22,18 @@ class Base(object):
             self.temp.seek(0)
         if not self.is_formatted():
             print('Unsupported file.')
+            sys.exit()
         # create a Frames object for all of the video's frames
         self.frames = Frames(self.temp)
+        self.avi = AVI(self.temp)
 
     def output(self, path):
         self.frames.stream.seek(0)
         with open(path, 'wb') as f:
             shutil.copyfileobj(self.frames.stream, f, BUFFER_SIZE)
+
+    def refresh_frames(self):
+        self.frames = Frames(self.temp)
 
     def is_formatted(self, path=None):
         '''Parse file header and check for justavithings.tumblr.com'''
@@ -38,10 +47,10 @@ class Base(object):
             self.temp.seek(0, 0)
             if self.temp.read(4) != b'RIFF': # if the first 4 bytes doesn't equal RIFF, we know this shit ain't avi
                 return False
-            l = struct.unpack('<I', self.temp.read(4))[0] # idk why i put this into a variable lol
+            self.temp.seek(4, 1)
             if self.temp.read(4) != b'AVI ': # if there's no avi here, it ain't no avi!!!
                 return False
-            while self.temp.read(4) in [b'LIST', b'JUNK']:
+            while self.temp.read(4) in [b'LIST', b'JUNK']: # skip all the headers
                 s = struct.unpack('<I', self.temp.read(4))[0]
                 self.temp.seek(s, 1)
             self.temp.seek(-4, 1)
@@ -93,7 +102,6 @@ class Frames(object):
         m = self.meta[n]
         self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
         frame = Frame(self.stream.read(m['size']), m['id'], m['flag'], m['offset'])
-        self.stream.seek(0)
         return frame
 
     def as_temp(self, io=None, block=None):
@@ -105,13 +113,13 @@ class Frames(object):
             frame = Frame(self.stream.read(m['size']), m['id'], m['flag'], m['offset'])
             if frame.framedata:
                 m['offset'] = io.tell() + 4
-                m['size'] = len(frame.framedata)
-                m['flag'] = frame.frameflag
-                m['id'] = frame.frameid
+                m['size'] = len(frame.data)
+                m['flag'] = frame.flag
+                m['id'] = frame.id
                 io.write(m['id'])
-                io.write(struct.pack("<I", len(frame.framedata)))
-                io.write(frame.framedata)
-                if len(frame.framedata) % 2 == 1:
+                io.write(struct.pack("<I", len(frame.data)))
+                io.write(frame.data)
+                if len(frame.data) % 2 == 1:
                     io.write(b'\000')
         io.seek(0)
         return io
@@ -143,21 +151,22 @@ class Frames(object):
         self.stream.write(struct.pack("<I", count))
         self.stream.seek(0)
 
+
     def remove_keyframes(self):
         '''Remove all keyframes!!'''
         newmeta = []
         for frame in self:
-            if frame.is_iframe():
-                    lastpframe = frame.as_meta() # save the first pframe to use at the start of the video
+            if frame.is_keyframe():
+                    lastdeltaframe = frame.as_meta() # save the first deltaframe to use at the start of the video
                     break
         for frame in self:
             if frame.is_audioframe():
                 newmeta.append(frame.as_meta()) # insert audio frames to keep them there
-            if frame.is_pframe():
-                newmeta.append(frame.as_meta()) # put all the pframes in where they're meant to be
-                lastpframe = frame.as_meta()
-            elif frame.is_iframe():
-                newmeta.append(lastpframe) # if the frame is not a pframe, just insert the last pframe instead >:)
+            if frame.is_deltaframe():
+                newmeta.append(frame.as_meta()) # put all the deltaframes in where they're meant to be
+                lastdeltaframe = frame.as_meta()
+            elif frame.is_keyframe():
+                newmeta.append(lastdeltaframe) # if the frame is not a deltaframe, just insert the last deltaframe instead >:)
                                                # this is to keep the video synced with the audio, so to speak
         self.meta = newmeta
 
@@ -175,32 +184,33 @@ class Frames(object):
 
 class Frame(object):
     def __init__(self, framedata, frameid, frameflag, offset):
-        self.framedata = framedata
-        self.frameid = frameid
-        self.frameflag = frameflag
-        self.frameoffset = offset
+        self.data = framedata
+        self.file = bytes_to_file(framedata)
+        self.id = frameid
+        self.flag = frameflag
+        self.offset = offset
 
     def as_meta(self):
         '''Reverts the process from a Frame instance to an entry in Frames.meta'''
-        return {'offset': self.frameoffset,
-                'flag': self.frameflag,
-                'id': self.frameid,
-                'size': len(self.framedata)}
+        return {'offset': self.offset,
+                'flag': self.flag,
+                'id': self.id,
+                'size': len(self.data)}
 
-    def is_iframe(self):
+    def is_keyframe(self):
         if self.is_videoframe():
-            return self.frameflag & AVIIF_KEYFRAME != 0
+            return self.flag & AVIIF_KEYFRAME != 0
         else:
             return False
 
-    def is_pframe(self):
+    def is_deltaframe(self):
         if self.is_videoframe():
-            return self.frameflag & AVIIF_KEYFRAME == 0
+            return self.flag & AVIIF_KEYFRAME == 0
         else:
             return False
 
     def is_videoframe(self):
-        return self.frameid[-2:] in [b'db', b'dc']
+        return self.id[-2:] in [b'db', b'dc']
 
     def is_audioframe(self):
-        return self.frameid[-2:] == b'wb'
+        return self.id[-2:] == b'wb'
