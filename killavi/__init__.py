@@ -3,8 +3,7 @@ import tempfile
 import shutil
 import sys
 from functools import partial
-import avi
-from avi import AVI, bytes_to_file
+from .avi import AVI, bytes_to_file
 
 
 BUFFER_SIZE = 2 ** 24
@@ -111,7 +110,7 @@ class Frames(object):
         for m in self.meta:
             self.stream.seek(self.pos_of_movi + m['offset'] + 8, 0)
             frame = Frame(self.stream.read(m['size']), m['id'], m['flag'], m['offset'])
-            if frame.framedata:
+            if frame.data:
                 m['offset'] = io.tell() + 4
                 m['size'] = len(frame.data)
                 m['flag'] = frame.flag

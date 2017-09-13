@@ -29,19 +29,19 @@ class AVI:
         self.size = struct.unpack('<I', self.file.read(4))[0]
 
         self.file.seek(32)
-        self.header = Header(self.file.read(56))
+        self.header = header(self.file.read(56))
 
         self.file.seek(0x5C)
-        self.streams = []
-        for i in range(0, self.header.streams):
+        self.header['streams'] = []
+        for i in range(0, self.header['total_streams']):
             self.file.seek(12, 1)
             stream_header_size = struct.unpack('<I', self.file.read(4))[0]
             if self.file.read(4) in [b'vids', b'auds']:
                 self.file.seek(-4, 1)
-                type = self.file.read(4)
+                t = self.file.read(4)
 
-            if type == b'vids':
-                video_header = video_stream_header(self.file.read(stream_header_size - 4))
+            if t == b'vids':
+                video_header = stream_header(self.file.read(stream_header_size - 4), t)
                 self.file.seek(4, 1)
                 stream_format_size = struct.unpack('<I', self.file.read(4))[0]
                 if stream_format_size == 40:
@@ -53,14 +53,14 @@ class AVI:
                 if self.file.read(4) == b'vprp':
                     properties_size = struct.unpack('<I', self.file.read(4))[0]
                     video_header["properties"] = vprp(self.file.read(properties_size))
-                self.streams.append(video_header)
+                self.header['streams'].append(video_header)
                 self.file.seek(4, 1)
-            elif type == b'auds':
-                audio_header = audio_stream_header(self.file.read(stream_header_size - 4))
-                self.streams.append(audio_header) # TODO: understand what audio headers really look like'
+            elif t == b'auds':
+                audio_header = stream_header(self.file.read(stream_header_size - 4), t)
                 self.file.seek(4, 1)
                 stream_format_size = struct.unpack('<I', self.file.read(4))[0]
                 audio_header["format"] = waveformatheader(self.file.read(stream_format_size))
+                self.header['streams'].append(audio_header) # TODO: understand what audio headers really look like'
                 while self.file.read(4) == b'JUNK':
                     next = struct.unpack('<I', self.file.read(4))[0]
                     self.file.seek(next, 1)
@@ -68,7 +68,7 @@ class AVI:
         if self.file.read(4) == b'INFO':
             self.file.seek(4, 1)
             size = struct.unpack('<I', self.file.read(4))[0]
-            self.info = str(self.file.read(size))[:-1]
+            self.header['info'] = str(self.file.read(size))[:-1]
         if self.file.read(4) == b'JUNK':
             next = struct.unpack('<I', self.file.read(4))[0]
             self.file.seek(next, 1)
@@ -76,34 +76,39 @@ class AVI:
 
 
 
-class Header:
-    def __init__(self, data):
-        f = bytes_to_file(data)
-        self.microsecond_per_frame = struct.unpack('<I', f.read(4))[0]
-        self.max_bytes_per_sec =  struct.unpack('<I', f.read(4))[0]
-        self.reserved1 = struct.unpack('<I', f.read(4))[0]
-        self.flags = HeaderFlags(struct.unpack('<I', f.read(4))[0])
-        self.total_frames = struct.unpack('<I', f.read(4))[0]
-        self.initial_frames = struct.unpack('<I', f.read(4))[0]
-        self.streams = struct.unpack('<I', f.read(4))[0]
-        self.suggested_buffer_size = struct.unpack('<I', f.read(4))[0]
-        self.width = struct.unpack('<I', f.read(4))[0]
-        self.height = struct.unpack('<I', f.read(4))[0]
-        self.reserved = struct.unpack('<IIII', f.read(16))[0]
-
-class HeaderFlags:
-    def __init__(self, input):
-        self.has_index = input & AVIF_HASINDEX != 0
-        self.must_use_index = input & AVIF_MUSTUSEINDEX != 0
-        self.is_interleaved = input & AVIF_ISINTERLEAVED != 0
-        self.was_capturefile = input & AVIF_WASCAPTUREFILE != 0
-        self.copyrighted = input & AVIF_COPYRIGHTED != 0
-        self.use_ck_type = input & AVIF_TRUSTCKTYPE != 0
-
-def audio_stream_header(data):
+def header(data):
     f = bytes_to_file(data)
     return {
-        'type': 'auds',
+        'microsecond_per_frame': struct.unpack('<I', f.read(4))[0],
+        'max_bytes_per_sec': struct.unpack('<I', f.read(4))[0],
+        'reserved1': struct.unpack('<I', f.read(4))[0],
+        'flags': header_flags(struct.unpack('<I', f.read(4))[0]),
+        'total_frames': struct.unpack('<I', f.read(4))[0],
+        'initial_frames': struct.unpack('<I', f.read(4))[0],
+        'total_streams': struct.unpack('<I', f.read(4))[0],
+        'suggested_buffer_size': struct.unpack('<I', f.read(4))[0],
+        'width': struct.unpack('<I', f.read(4))[0],
+        'height': struct.unpack('<I', f.read(4))[0],
+        'reserved': struct.unpack('<IIII', f.read(16))[0]
+    }
+
+def header_flags(input):
+    return {
+        'AVIF_HASINDEX': input & AVIF_HASINDEX != 0,
+        'AVIF_MUSTUSEINDEX': input & AVIF_MUSTUSEINDEX != 0,
+        'AVIF_ISINTERLEAVED': input & AVIF_ISINTERLEAVED != 0,
+        'AVIF_WASCAPTUREFILE': input & AVIF_WASCAPTUREFILE != 0,
+        'AVIF_COPYRIGHTED': input & AVIF_COPYRIGHTED != 0,
+        'AVIF_TRUSTCKTYPE': input & AVIF_TRUSTCKTYPE != 0,
+    }
+
+def stream_header(data, t):
+    f = bytes_to_file(data)
+    header = {}
+    if t.decode() == 'vids':
+        header["handler"] = f.read(4).decode()
+    header.update({
+        'type': t.decode(),
         'flags': struct.unpack('<I', f.read(4))[0],
         'priority': struct.unpack('<H', f.read(2))[0],
         'language': struct.unpack('<H', f.read(2))[0],
@@ -120,8 +125,9 @@ def audio_stream_header(data):
             'top': struct.unpack('<H', f.read(2))[0],
             'right': struct.unpack('<H', f.read(2))[0],
             'bottom': struct.unpack('<H', f.read(2))[0]
-        }
-    }
+        },
+    })
+    return header
 
 def waveformatheader(data):
     f = bytes_to_file(data)
@@ -150,30 +156,6 @@ def waveformatheader(data):
     return header
 
 
-def video_stream_header(data):
-    f = bytes_to_file(data)
-    return {
-        'type': 'vids',
-        'handler': str(f.read(4)),
-        'flags': struct.unpack('<I', f.read(4))[0],
-        'priority': struct.unpack('<H', f.read(2))[0],
-        'language': struct.unpack('<H', f.read(2))[0],
-        'initial_frames': struct.unpack('<i', f.read(4))[0],
-        'scale': struct.unpack('<I', f.read(4))[0],
-        'rate': struct.unpack('<I', f.read(4))[0],
-        'start': struct.unpack('<I', f.read(4))[0],
-        'length': struct.unpack('<I', f.read(4))[0],
-        'suggested_buffer_size': struct.unpack('<I', f.read(4))[0],
-        'quality': struct.unpack('<i', f.read(4))[0],
-        'sample_size': struct.unpack('<I', f.read(4))[0],
-        'frame': {
-            'left': struct.unpack('<H', f.read(2))[0],
-            'top': struct.unpack('<H', f.read(2))[0],
-            'right': struct.unpack('<H', f.read(2))[0],
-            'bottom': struct.unpack('<H', f.read(2))[0]
-        }
-    }
-
 def bitmapinfoheader(data):
     f = bytes_to_file(data)
     f.seek(4, 1)
@@ -182,7 +164,7 @@ def bitmapinfoheader(data):
         'height': struct.unpack('<l', f.read(4))[0],
         'planes': struct.unpack('<H', f.read(2))[0],
         'bit_count': struct.unpack('<H', f.read(2))[0],
-        'compression': str(f.read(4)),
+        'compression': f.read(4).decode(),
         'size_image': struct.unpack('<I', f.read(4))[0],
         'x_pixels_per_meter': struct.unpack('<l', f.read(4))[0],
         'y_pixels_per_meter': struct.unpack('<l', f.read(4))[0],
