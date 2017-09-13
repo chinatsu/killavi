@@ -1,6 +1,7 @@
 import tempfile
 import struct
 import shutil
+import sys
 
 AVIF_HASINDEX = 0x00000010
 AVIF_MUSTUSEINDEX = 0x00000020
@@ -22,59 +23,78 @@ def bytes_to_file(data):
 
 class AVI:
     def __init__(self, file):
+        streams = []
         self.file = tempfile.TemporaryFile()
         shutil.copyfileobj(file, self.file, BUFFER_SIZE)
 
-        self.file.seek(4)
+        while self.file.read(4) in [b'LIST', b'JUNK']:
+            s = struct.unpack('<I', self.file.read(4))[0]
+            if self.file.read(4) == b'movi':
+                self.movi = self.file.tell() - 4 # get ourselves the 'movi' marker
+            self.file.seek(s - 4, 1)
+        self.idx1 = self.file.tell() - 4 # get the 'idx1' marker
+
+        self.file.seek(0)
+        check(self.file.read(4) == b'RIFF')
         self.size = struct.unpack('<I', self.file.read(4))[0]
+        check(self.file.read(4) == b'AVI ')
 
-        self.file.seek(32)
-        self.header = header(self.file.read(56))
-
-        self.file.seek(0x5C)
-        self.header['streams'] = []
-        for i in range(0, self.header['total_streams']):
-            self.file.seek(12, 1)
-            stream_header_size = struct.unpack('<I', self.file.read(4))[0]
-            if self.file.read(4) in [b'vids', b'auds']:
-                self.file.seek(-4, 1)
-                t = self.file.read(4)
-
-            if t == b'vids':
-                video_header = stream_header(self.file.read(stream_header_size - 4), t)
+        chunk = self.file.read(4)
+        while chunk in [b'LIST', b'JUNK']:
+            chunksize = struct.unpack('<I', self.file.read(4))[0]
+            chunktype = self.file.read(4)
+            if chunk == b'JUNK':
+                self.file.seek(chunksize - 4, 1)
+            if chunktype == b'hdrl':
+                check(self.file.read(4) == b'avih')
+                headersize = struct.unpack('<I', self.file.read(4))[0]
+                self.header = header(self.file.read(56))
+            elif chunktype == b'strl':
+                check(self.file.read(4) == b'strh')
+                streamsize = struct.unpack('<I', self.file.read(4))[0]
+                streamtype = self.file.read(4)
+                if streamtype == b'vids':
+                    video_header = stream_header(self.file.read(streamsize - 4), streamtype)
+                    check(self.file.read(4) == b'strf')
+                    formatsize = struct.unpack('<I', self.file.read(4))[0]
+                    if formatsize == 40:
+                        video_header["format"] = bitmapinfoheader(self.file.read(formatsize))
+                    # there's some junk here before an eventual video properties header
+                    # so let's skip it
+                    if self.file.read(4) == b'JUNK':
+                        chunksize = struct.unpack('<I', self.file.read(4))[0]
+                        self.file.seek(chunksize, 1)
+                    else:
+                        self.file.seek(-4, 1)
+                    if self.file.read(4) == b'vprp':
+                        propsize = struct.unpack('<I', self.file.read(4))[0]
+                        video_header['properties'] = vprp(self.file.read(propsize))
+                    else:
+                        self.file.seek(-4, 1)
+                    streams.append(video_header)
+                elif streamtype == b'auds':
+                    audio_header = stream_header(self.file.read(streamsize - 4), streamtype)
+                    check(self.file.read(4) == b'strf')
+                    formatsize = struct.unpack('<I', self.file.read(4))[0]
+                    audio_header['format'] = waveformatheader(self.file.read(formatsize))
+                    streams.append(audio_header)
+                    if self.file.read(4) == b'JUNK':
+                        chunksize = struct.unpack('<I', self.file.read(4))[0]
+                        self.file.seek(chunksize, 1)
+            elif chunktype == b'INFO':
                 self.file.seek(4, 1)
-                stream_format_size = struct.unpack('<I', self.file.read(4))[0]
-                if stream_format_size == 40:
-                    video_header["format"] = bitmapinfoheader(self.file.read(40))
+                infosize = struct.unpack('<I', self.file.read(4))[0]
+                self.header['info'] = self.file.read(infosize).decode()[:-1]
+            elif chunktype == b'movi':
+                self.movi = self.file.tell()
+                self.file.seek(chunksize, 4)
+            chunk = self.file.read(4)
+        self.header['streams'] = streams
 
-                if self.file.read(4) == b'JUNK':
-                    next = struct.unpack('<I', self.file.read(4))[0]
-                    self.file.seek(next, 1)
-                if self.file.read(4) == b'vprp':
-                    properties_size = struct.unpack('<I', self.file.read(4))[0]
-                    video_header["properties"] = vprp(self.file.read(properties_size))
-                self.header['streams'].append(video_header)
-                self.file.seek(4, 1)
-            elif t == b'auds':
-                audio_header = stream_header(self.file.read(stream_header_size - 4), t)
-                self.file.seek(4, 1)
-                stream_format_size = struct.unpack('<I', self.file.read(4))[0]
-                audio_header["format"] = waveformatheader(self.file.read(stream_format_size))
-                self.header['streams'].append(audio_header) # TODO: understand what audio headers really look like'
-                while self.file.read(4) == b'JUNK':
-                    next = struct.unpack('<I', self.file.read(4))[0]
-                    self.file.seek(next, 1)
-                self.file.seek(4, 1)
-        if self.file.read(4) == b'INFO':
-            self.file.seek(4, 1)
-            size = struct.unpack('<I', self.file.read(4))[0]
-            self.header['info'] = str(self.file.read(size))[:-1]
-        if self.file.read(4) == b'JUNK':
-            next = struct.unpack('<I', self.file.read(4))[0]
-            self.file.seek(next, 1)
-        # we should now be near self.movi
-
-
+def check(statement):
+    if statement == False:
+        print("Unsupported file")
+        sys.exit()
 
 def header(data):
     f = bytes_to_file(data)

@@ -165,7 +165,7 @@ class Frames(object):
                 newmeta.append(frame.as_meta()) # put all the deltaframes in where they're meant to be
                 lastdeltaframe = frame.as_meta()
             elif frame.is_keyframe():
-                newmeta.append(lastdeltaframe) # if the frame is not a deltaframe, just insert the last deltaframe instead >:)
+                newmeta.append(lastdeltaframe) # if the frame is not a deltaframe, just insert the last deltaframe instead
                                                # this is to keep the video synced with the audio, so to speak
         self.meta = newmeta
 

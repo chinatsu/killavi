@@ -7,5 +7,6 @@ from pprint import pprint
 # a.output('test.avi')
 
 a = killavi.Base('sample.avi')
-#pprint(a.avi.streams[0])
 pprint(a.avi.header)
+print("Position of movi: 0x{0:x}".format(a.avi.movi))
+print("Position of idx1: 0x{0:x}".format(a.avi.idx1))
