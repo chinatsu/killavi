@@ -87,7 +87,14 @@ class AVI:
                 self.header['info'] = self.file.read(infosize).decode()[:-1]
             elif chunktype == b'movi':
                 self.movi = self.file.tell()
-                self.file.seek(chunksize, 4)
+                thing = self.file.read(4)
+                while thing != b'\x00\x00\x01\xb6':
+                    self.file.seek(-2, 1)
+                    thing = self.file.read(4)
+                self.file.seek(-4, 1)
+                self.vop_start_code = self.file.tell()
+                self.file.seek(self.movi)
+                self.file.seek(chunksize, 1)
             chunk = self.file.read(4)
         self.header['streams'] = streams
 

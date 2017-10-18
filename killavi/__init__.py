@@ -4,6 +4,7 @@ import shutil
 import sys
 from functools import partial
 from .avi import AVI, bytes_to_file
+from .mp4 import MP4
 
 
 BUFFER_SIZE = 2 ** 24
@@ -25,6 +26,8 @@ class Base(object):
         # create a Frames object for all of the video's frames
         self.frames = Frames(self.temp)
         self.avi = AVI(self.temp)
+        self.temp.seek(self.avi.vop_start_code)
+        self.mp4 = MP4(self.temp.read(128))
 
     def output(self, path):
         self.frames.stream.seek(0)
